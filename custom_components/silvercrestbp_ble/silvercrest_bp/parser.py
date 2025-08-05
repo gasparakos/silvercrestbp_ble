@@ -46,10 +46,22 @@ class SilvercrestBPBluetoothDeviceData(BluetoothData):
         """Update from BLE advertisement data."""
         _LOGGER.debug("Parsing SilvercrestBP BLE advertisement data: %s", service_info)
         self.set_device_manufacturer("Silvercrest")
-        self.set_device_type("Blood Pressure Measurement")
+        
+        # Set device type based on model
+        device_name = service_info.name or ""
+        if "SBM69" in device_name:
+            self.set_device_type("Blood Pressure Monitor SBM69")
+        else:
+            self.set_device_type("Blood Pressure Monitor SBM70")
+            
         name = f"{service_info.name} {short_address(service_info.address)}"
         self.set_device_name(name)
         self.set_title(name)
+    
+    def supported(self, service_info: BluetoothServiceInfo) -> bool:
+        """Check if the device is supported."""
+        device_name = service_info.name or ""
+        return device_name in ["SBM69", "SBM70"]
 
     def poll_needed(
         self, service_info: BluetoothServiceInfo, last_poll: float | None
@@ -65,57 +77,56 @@ class SilvercrestBPBluetoothDeviceData(BluetoothData):
         """Helper for command events, parsing and updating sensor data."""
         try:
             # Debug log for raw data received
-            _LOGGER.debug("Raw data received from BLE device: %s", data)
-
-            syst = data[2] * 256 + data[1]
-            diast = data[4] * 256 + data[3]
-            arter = data[6] * 256 + data[5]  # This variable is parsed but not used
-            dyear = data[8] * 256 + data[7]
-            dmonth = data[9]
-            dday = data[10]
-            dhour = data[11]
-            dminu = data[12]
-            puls = data[15] * 256 + data[14]
-            user = data[16]  # This variable is parsed but not used
-
-            try:
-                datetime_str = f"{dyear}/{dmonth}/{dday} {dhour}:{dminu:0>2}"
-                date = datetime.strptime(datetime_str, '%Y/%m/%d %H:%M')
-                local_timezone = datetime.now(timezone.utc).astimezone().tzinfo
+            _LOGGER.debug("Raw data received from BLE device: %s (length: %d)", data.hex(), len(data))
+            
+            # Parse data based on length (SBM69=19 bytes, SBM70=17 bytes)
+            if len(data) == 19:  # SBM69 format
+                parsed_data = self._parse_sbm69_data(data)
+            elif len(data) == 17:  # SBM70 format  
+                parsed_data = self._parse_sbm70_data(data)
+            else:
+                _LOGGER.warning("Unexpected data length: %d bytes", len(data))
+                return
+            
+            if not parsed_data:
+                return
+                
+            # Update timestamp
+            if parsed_data.get('timestamp'):
                 self.update_sensor(
                     key=str(SilvercrestBPSensor.TIMESTAMP),
                     native_unit_of_measurement=None,
-                    native_value=date.replace(tzinfo=local_timezone),
+                    native_value=parsed_data['timestamp'],
                     name="Measured Date",
                 )
-            except Exception as e:
-                _LOGGER.error("Failed to parse and update Measured Date: %s", str(e))
 
             _LOGGER.info(
                 "Parsed data from BPM device (systolic: %s, diastolic: %s, pulse: %s)",
-                syst, diast, puls
+                parsed_data['systolic'], parsed_data['diastolic'], parsed_data['pulse']
             )
 
+            # Update sensors
             self.update_sensor(
                 key=str(SilvercrestBPSensor.SYSTOLIC),
                 native_unit_of_measurement=Units.PRESSURE_MMHG,
-                native_value=syst,
+                native_value=parsed_data['systolic'],
                 device_class=SensorDeviceClass.PRESSURE,
                 name="Systolic",
             )
             self.update_sensor(
                 key=str(SilvercrestBPSensor.DIASTOLIC),
                 native_unit_of_measurement=Units.PRESSURE_MMHG,
-                native_value=diast,
+                native_value=parsed_data['diastolic'],
                 device_class=SensorDeviceClass.PRESSURE,
                 name="Diastolic",
             )
             self.update_sensor(
                 key=str(SilvercrestBPSensor.PULSE),
                 native_unit_of_measurement="bpm",
-                native_value=puls,
+                native_value=parsed_data['pulse'],
                 name="Pulse",
             )
+            
         except Exception as e:
             _LOGGER.error("Unexpected error while handling BLE notification: %s", str(e))
         finally:
@@ -165,3 +176,85 @@ class SilvercrestBPBluetoothDeviceData(BluetoothData):
                 _LOGGER.error("Failed to disconnect from BLE device: %s", str(e))
             _LOGGER.debug("Disconnected from active Bluetooth client")
         return self._finish_update()
+    
+    def _parse_sbm69_data(self, data: bytes) -> dict | None:
+        """Parse SBM69 19-byte data format."""
+        try:
+            # SBM69 format: 19 bytes
+            # Bytes 1-2: Systolic (LE), 3-4: Diastolic (LE), 5-6: Mean arterial (LE)
+            # Bytes 7-8: Year (LE), 9: Month, 10: Day, 11: Hour, 12: Minute, 13: Second
+            # Bytes 14-15: Pulse (LE), 16: User ID, 17-18: Additional flags
+            
+            systolic = data[2] * 256 + data[1]
+            diastolic = data[4] * 256 + data[3]
+            mean_arterial = data[6] * 256 + data[5]  # Available in SBM69
+            
+            year = data[8] * 256 + data[7]
+            month = data[9]
+            day = data[10]
+            hour = data[11]
+            minute = data[12]
+            second = data[13]
+            
+            pulse = data[15] * 256 + data[14]
+            user_id = data[16]
+            
+            # Create timestamp
+            timestamp = None
+            try:
+                timestamp = datetime(year, month, day, hour, minute, second)
+                local_timezone = datetime.now(timezone.utc).astimezone().tzinfo
+                timestamp = timestamp.replace(tzinfo=local_timezone)
+            except ValueError as e:
+                _LOGGER.error("Failed to parse SBM69 timestamp: %s", str(e))
+            
+            return {
+                'systolic': systolic,
+                'diastolic': diastolic,
+                'pulse': pulse,
+                'timestamp': timestamp,
+                'mean_arterial': mean_arterial,  # SBM69 specific
+                'user_id': user_id
+            }
+            
+        except Exception as e:
+            _LOGGER.error("Error parsing SBM69 data: %s", str(e))
+            return None
+    
+    def _parse_sbm70_data(self, data: bytes) -> dict | None:
+        """Parse SBM70 17-byte data format (original format)."""
+        try:
+            # SBM70 format: 17 bytes (original format)
+            systolic = data[2] * 256 + data[1]
+            diastolic = data[4] * 256 + data[3]
+            # Skip arterial pressure for SBM70
+            
+            year = data[8] * 256 + data[7]
+            month = data[9]
+            day = data[10]
+            hour = data[11]
+            minute = data[12]
+            
+            pulse = data[15] * 256 + data[14]
+            user_id = data[16] if len(data) > 16 else 1
+
+            # Create timestamp
+            timestamp = None
+            try:
+                timestamp = datetime(year, month, day, hour, minute, 0)
+                local_timezone = datetime.now(timezone.utc).astimezone().tzinfo
+                timestamp = timestamp.replace(tzinfo=local_timezone)
+            except ValueError as e:
+                _LOGGER.error("Failed to parse SBM70 timestamp: %s", str(e))
+
+            return {
+                'systolic': systolic,
+                'diastolic': diastolic,
+                'pulse': pulse,
+                'timestamp': timestamp,
+                'user_id': user_id
+            }
+            
+        except Exception as e:
+            _LOGGER.error("Error parsing SBM70 data: %s", str(e))
+            return None

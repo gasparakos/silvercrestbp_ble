@@ -10,6 +10,13 @@
       },
       "bluetooth_confirm": {
         "description": "[%key:component::bluetooth::config::step::bluetooth_confirm::description%]"
+      },
+      "pairing_code": {
+        "title": "Device Pairing Required",
+        "description": "Your {device_name} device requires pairing. Please put the device in pairing mode and enter the 6-digit code displayed on the device screen.",
+        "data": {
+          "pairing_code": "6-digit pairing code"
+        }
       }
     },
     "abort": {
@@ -17,6 +24,12 @@
       "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]",
       "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    },
+    "error": {
+      "invalid_pairing_code": "Pairing code must be exactly 6 digits",
+      "pairing_failed": "Failed to pair with device. Please ensure the device is in pairing mode and try again.",
+      "device_not_found": "Device not found. Please ensure the device is nearby and in pairing mode.",
+      "dbus_not_available": "Bluetooth pairing not available. Please pair manually using: bluetoothctl pair {device_address}"
     }
   }
 }

@@ -5,6 +5,10 @@
     {
       "local_name": "SBM70",
       "connectable": true
+    },
+    {
+      "local_name": "SBM69",
+      "connectable": true
     }
   ],
   "codeowners": ["@syphernl"],
