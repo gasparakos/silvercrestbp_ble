@@ -7,8 +7,8 @@ import logging
 import asyncio
 
 import voluptuous as vol
-import dbus
-import dbus.exceptions
+from bleak import BleakClient
+from bleak.exc import BleakError
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
@@ -170,64 +170,51 @@ class SilvercrestBPConfigFlow(ConfigFlow, domain=DOMAIN):
         return "SBM69" in device_name
     
     async def _async_pair_device(self, address: str, pairing_code: str) -> dict[str, Any]:
-        """Attempt to pair with the device using D-Bus."""
+        """Attempt to pair with the device using BleakClient."""
         try:
             _LOGGER.info(f"Attempting to pair with {address} using code {pairing_code}")
             
-            # This is a simplified version - in practice you'd want to use proper async D-Bus
-            # For now, we'll simulate the pairing process
-            result = await self.hass.async_add_executor_job(
-                self._pair_device_sync, address, pairing_code
-            )
-            return result
+            # Note: The pairing code will be handled by the system's pairing agent
+            # We just initiate the pairing process here
+            client = BleakClient(address)
             
-        except Exception as e:
-            _LOGGER.error(f"Error during pairing: {e}")
-            return {"success": False, "error": "pairing_failed"}
-    
-    def _pair_device_sync(self, address: str, pairing_code: str) -> dict[str, Any]:
-        """Synchronous pairing using D-Bus."""
-        try:
-            import dbus.mainloop.glib
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            
-            bus = dbus.SystemBus()
-            device_path = f"/org/bluez/hci0/dev_{address.replace(':', '_')}"
-            
-            # Check if device exists
             try:
-                device_obj = bus.get_object("org.bluez", device_path)
-                device = dbus.Interface(device_obj, "org.bluez.Device1")
-                
-                # Check if already paired
-                properties = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
-                is_paired = properties.Get("org.bluez.Device1", "Paired")
-                
-                if is_paired:
-                    _LOGGER.info(f"Device {address} is already paired")
-                    return {"success": True, "error": None}
-                
-                # Attempt pairing
-                _LOGGER.info(f"Initiating pairing for {address}")
-                device.Pair()
-                
-                # In a real implementation, you'd need to handle the pairing agent
-                # that responds with the pairing code when requested
-                
+                # First try to connect without pairing to check if already paired
+                await client.connect(timeout=10.0)
+                _LOGGER.info(f"Device {address} is already paired and connected")
+                await client.disconnect()
                 return {"success": True, "error": None}
                 
-            except dbus.exceptions.DBusException as e:
-                if "Does not exist" in str(e):
-                    return {"success": False, "error": "device_not_found"}
-                elif "Already exists" in str(e):
-                    return {"success": True, "error": None}
-                else:
-                    _LOGGER.error(f"D-Bus error during pairing: {e}")
-                    return {"success": False, "error": "pairing_failed"}
+            except BleakError as e:
+                if "not paired" in str(e).lower() or "authentication" in str(e).lower():
+                    _LOGGER.info(f"Device {address} requires pairing")
                     
-        except ImportError:
-            _LOGGER.warning("D-Bus not available, cannot perform automatic pairing")
-            return {"success": False, "error": "dbus_not_available"}
+                    try:
+                        # Disconnect if partially connected
+                        if client.is_connected:
+                            await client.disconnect()
+                        
+                        # Create new client with pairing enabled
+                        pair_client = BleakClient(address, pair=True)
+                        await pair_client.connect(timeout=30.0)  # Longer timeout for pairing
+                        
+                        _LOGGER.info(f"Successfully paired and connected to {address}")
+                        await pair_client.disconnect()
+                        return {"success": True, "error": None}
+                        
+                    except BleakError as pair_error:
+                        _LOGGER.error(f"Pairing failed for {address}: {pair_error}")
+                        if "timeout" in str(pair_error).lower():
+                            return {"success": False, "error": "pairing_timeout"}
+                        elif "rejected" in str(pair_error).lower():
+                            return {"success": False, "error": "pairing_rejected"}
+                        else:
+                            return {"success": False, "error": "pairing_failed"}
+                else:
+                    _LOGGER.error(f"Connection failed for {address}: {e}")
+                    return {"success": False, "error": "connection_failed"}
+            
         except Exception as e:
             _LOGGER.error(f"Unexpected error during pairing: {e}")
             return {"success": False, "error": "pairing_failed"}
+    

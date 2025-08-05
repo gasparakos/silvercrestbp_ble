@@ -13,9 +13,9 @@
       },
       "pairing_code": {
         "title": "Device Pairing Required",
-        "description": "Your {device_name} device requires pairing. Please put the device in pairing mode and enter the 6-digit code displayed on the device screen.",
+        "description": "Your {device_name} device requires pairing before it can be used.\n\n1. Put your device in pairing mode (consult device manual)\n2. The device should display a 6-digit code on its screen\n3. Enter that code below and click Submit\n4. Home Assistant will automatically handle the pairing process",
         "data": {
-          "pairing_code": "6-digit pairing code"
+          "pairing_code": "6-digit pairing code from device"
         }
       }
     },
@@ -27,9 +27,10 @@
     },
     "error": {
       "invalid_pairing_code": "Pairing code must be exactly 6 digits",
-      "pairing_failed": "Failed to pair with device. Please ensure the device is in pairing mode and try again.",
-      "device_not_found": "Device not found. Please ensure the device is nearby and in pairing mode.",
-      "dbus_not_available": "Bluetooth pairing not available. Please pair manually using: bluetoothctl pair {device_address}"
+      "pairing_failed": "Failed to pair with device. Please ensure the device is in pairing mode and the 6-digit code is correct.",
+      "pairing_timeout": "Pairing timed out. Please put the device in pairing mode and try again.",
+      "pairing_rejected": "Pairing was rejected. Please check the 6-digit code and try again.",
+      "connection_failed": "Could not connect to device. Please ensure the device is nearby and powered on."
     }
   }
 }
